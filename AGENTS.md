@@ -79,6 +79,12 @@ listener left zero rows. A dead SMTP server silently lost applications.
   when unbound, which is the right default and the least discoverable one: forget a
   binding and the portal goes quiet rather than open. Leaving it unbound keeps that
   path exercised.
+- **`composer.bat require pkg:^0.5` silently drops the caret on Windows.** `^` is
+  CMD's escape character, so composer receives `0.5` -- an exact pin that takes no
+  patches -- and warns about it in a line easily lost in install output. This repo
+  was pinned to exactly 0.5.0 for twenty minutes because of it. Check
+  `composer.json` after any `require`, or quote the constraint so CMD cannot see
+  the caret.
 - **`employer_gate.column` is `null` here** — the ungated path, which the package's
   first consumer never ran because they moderate. It is the default that surprises.
 
