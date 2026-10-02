@@ -88,6 +88,25 @@ listener left zero rows. A dead SMTP server silently lost applications.
 - **`employer_gate.column` is `null` here** — the ungated path, which the package's
   first consumer never ran because they moderate. It is the default that surprises.
 
+## CI
+
+`.github/workflows/ci.yml` — the allowlist, then the PHP suite, then the live-serve
+one. The live-serve job is the load-bearing half: the PHP suite can pass while the
+published `JobsClient` talks to URLs the package does not serve, because nothing in
+PHP exercises the client.
+
+**The alignment check is step zero and it earned that on day one.** Running the
+estate's third-party allowlist against this repo the first time failed two things
+that `laravel new` had scaffolded in: an unapproved `@laravel/multiplex` referenced
+nowhere but `package.json`, and `fakerphp/faker`, which last saw activity 2026-02-04
+against a 92-day freshness bar. Both removed -- `fake()` was reachable from exactly
+two lines of `UserFactory`, now deterministic, which also makes every failure here
+reproducible.
+
+**Measure the checker with its exit code, not its output.** Reading
+`node check.mjs --repo . | tail` and then `$?` reports *tail's* status; it printed
+FAIL lines and read as exit 0. The checker is honest -- the measurement was not.
+
 ## Rules for working in here
 
 - **A test that passes before the fix is the defect, not the evidence.** Run it

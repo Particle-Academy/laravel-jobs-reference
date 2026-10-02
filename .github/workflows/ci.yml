@@ -1,0 +1,99 @@
+name: CI
+
+# Why this exists on day one rather than later.
+#
+# This repo is the reference consumer: it is read and copied more than it is run.
+# It shipped without CI, and the omission was recorded in a workstation-wide note
+# saying "give every repo the standard workflow on day one" -- which would have
+# made the note an assertion sitting above a repo that contradicted it. That is
+# precisely the failure this repo's own AGENTS.md warns about, so it is fixed
+# rather than filed.
+#
+# The live-serve job is the load-bearing one. The PHP suite can pass while the
+# published JobsClient talks to URLs the package does not serve, because nothing
+# in PHP exercises the client. A wrong URL is a 404 in the live-serve suite and
+# nowhere else.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: PHP suite + live-serve route agreement
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Third-party dependency allowlist, FIRST -- before anything installs or
+      # compiles. It is the only step whose failure means "do not evaluate this at
+      # all": everything after it answers "does it work", this one answers "are we
+      # allowed to ship it".
+      #
+      # FETCHED, never vendored: one source of truth, no copy to drift.
+      - name: Fetch the third-party allowlist
+        uses: actions/checkout@v4
+        with:
+          repository: Particle-Academy/.github
+          path: .third-party-allowlist
+          persist-credentials: false
+
+      - name: Third-party dependency allowlist
+        run: |
+          node .third-party-allowlist/third-party/check.mjs --repo .
+          # Delete it. A fetched checkout left in the workspace is not inert --
+          # vitest has globbed a checker's own tests out of one and failed a
+          # package whose code was fine.
+          node -e "require('node:fs').rmSync('.third-party-allowlist',{recursive:true,force:true})"
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          coverage: none
+          extensions: mbstring, sqlite3, pdo_sqlite
+
+      - name: Install PHP dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # `npm ci`, because this repo DOES track package-lock.json. That matters:
+      # where a repo tracks no lockfile, CI resolves the tree from scratch and a
+      # local `npm test` is not running what CI runs -- which let a sibling package
+      # ship three releases over a red build.
+      - name: Install JS dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      # 27 tests. The gate column, the resume authorization, the identity-spoof
+      # suite, and the event wiring.
+      - name: PHP suite
+        run: php artisan test
+
+      # 21 tests. Boots the app on a real port against a throwaway SQLite file and
+      # drives the PUBLISHED @particle-academy/job-board client at it.
+      #
+      # It carries its own environment in `.env.liveserve` rather than in exported
+      # variables, and the reason is a trap worth knowing: `php artisan serve` does
+      # NOT hand its environment to the server process. It forwards
+      # ServeCommand::$passthroughVariables -- APP_ENV, PATH, a few Herd/Xdebug
+      # ones -- and DB_* is not on the list. Pass DB_DATABASE and the server reads
+      # .env instead, answers 200 from an empty database, and the suite fails with
+      # "the board does not list the posting", which reads exactly like a bug in
+      # the package's visibility scope.
+      #
+      # The harness asserts the fixture is visible over HTTP before handing control
+      # to the tests, so a harness fault cannot masquerade as a product fault.
+      - name: Live-serve route agreement
+        run: npm run test:live
