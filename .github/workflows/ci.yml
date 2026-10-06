@@ -27,7 +27,7 @@ jobs:
     name: PHP suite + live-serve route agreement
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Third-party dependency allowlist, FIRST -- before anything installs or
       # compiles. It is the only step whose failure means "do not evaluate this at
@@ -36,7 +36,7 @@ jobs:
       #
       # FETCHED, never vendored: one source of truth, no copy to drift.
       - name: Fetch the third-party allowlist
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Particle-Academy/.github
           path: .third-party-allowlist
@@ -60,7 +60,7 @@ jobs:
       - name: Install PHP dependencies
         run: composer install --prefer-dist --no-interaction --no-progress
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
 
