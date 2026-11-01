@@ -28,9 +28,14 @@ package suite.
 | `tests/js/jobs-client-routes.test.ts` | `JobsClient`'s URLs are URLs the package serves |
 
 ```bash
-php artisan test        # the PHP suites
+vendor/bin/pest         # the PHP suites (also `composer test`)
 npm run test:live       # boots the app on a port and drives JobsClient at it
 ```
+
+The PHP suites are written with Pest. `tests/Pest.php` binds every test in
+`tests/Feature` to `Tests\TestCase` with `RefreshDatabase`; write new tests as
+`test()` / `it()` closures. Helper functions in a test file are global in Pest,
+so give them names that cannot collide across files.
 
 ## The findings, and what they cost
 

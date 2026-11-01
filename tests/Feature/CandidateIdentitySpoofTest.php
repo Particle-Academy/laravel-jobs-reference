@@ -2,15 +2,11 @@
 
 declare(strict_types=1);
 
-namespace Tests\Feature;
-
 use App\Models\Employer;
 use App\Models\User;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use ParticleAcademy\LaravelJobs\Enums\JobPostingStatus;
 use ParticleAcademy\LaravelJobs\Models\JobApplication;
 use ParticleAcademy\LaravelJobs\Models\JobPosting;
-use Tests\TestCase;
 
 /**
  * Can an unauthenticated caller read someone else's application by claiming to
@@ -31,109 +27,91 @@ use Tests\TestCase;
  * These tests state the attack, not the fix. Run against laravel-jobs 0.3.0 they
  * describe what it does.
  */
-final class CandidateIdentitySpoofTest extends TestCase
-{
-    use RefreshDatabase;
+beforeEach(function () {
+    config()->set('laravel-jobs.employer_model', Employer::class);
 
-    private User $victim;
-    private JobApplication $application;
+    $this->victim = User::factory()->create();
+    $owner = User::factory()->create();
 
-    protected function setUp(): void
-    {
-        parent::setUp();
+    $employer = Employer::query()->create([
+        'user_id' => $owner->getKey(),
+        'name' => 'Acme Hiring',
+        'status' => 'approved',
+    ]);
 
-        config()->set('laravel-jobs.employer_model', Employer::class);
+    $posting = JobPosting::query()->create([
+        'employer_id' => $employer->getKey(),
+        'title' => 'Security Officer',
+        'slug' => 'security-officer',
+        'description' => 'Guard things.',
+        'status' => JobPostingStatus::Published,
+        'published_at' => now(),
+    ]);
 
-        $this->victim = User::factory()->create();
-        $owner = User::factory()->create();
+    $this->application = JobApplication::query()->create([
+        'job_posting_id' => $posting->getKey(),
+        'user_id' => $this->victim->getKey(),
+        'status' => 'submitted',
+        'resume_path' => 'resumes/victim-cv.pdf',
+        'cover_letter' => 'Please hire me.',
+        'contact_email' => 'victim@example.test',
+        'contact_phone' => '555-0100',
+    ]);
+});
 
-        $employer = Employer::query()->create([
-            'user_id' => $owner->getKey(),
-            'name' => 'Acme Hiring',
-            'status' => 'approved',
-        ]);
+test('an anonymous caller cannot read an application by passing user_id', function () {
+    $response = $this->getJson('/api/jobs/my-applications?user_id='.$this->victim->getKey());
 
-        $posting = JobPosting::query()->create([
-            'employer_id' => $employer->getKey(),
-            'title' => 'Security Officer',
-            'slug' => 'security-officer',
-            'description' => 'Guard things.',
-            'status' => JobPostingStatus::Published,
-            'published_at' => now(),
-        ]);
+    expect($response->getStatusCode())->not->toBe(
+        200,
+        'an unauthenticated caller supplying a user_id must not be treated as that user',
+    );
+});
 
-        $this->application = JobApplication::query()->create([
-            'job_posting_id' => $posting->getKey(),
-            'user_id' => $this->victim->getKey(),
-            'status' => 'submitted',
-            'resume_path' => 'resumes/victim-cv.pdf',
-            'cover_letter' => 'Please hire me.',
-            'contact_email' => 'victim@example.test',
-            'contact_phone' => '555-0100',
-        ]);
-    }
+test('an anonymous caller cannot read an application via the candidate header', function () {
+    $response = $this->getJson('/api/jobs/my-applications', [
+        'X-Candidate-Id' => (string) $this->victim->getKey(),
+    ]);
 
-    public function test_an_anonymous_caller_cannot_read_an_application_by_passing_user_id(): void
-    {
-        $response = $this->getJson('/api/jobs/my-applications?user_id='.$this->victim->getKey());
+    expect($response->getStatusCode())->not->toBe(200);
+});
 
-        self::assertNotSame(
-            200,
-            $response->getStatusCode(),
-            'an unauthenticated caller supplying a user_id must not be treated as that user',
+test('the contact details and resume path do not leak', function () {
+    // The payload is the point. An application carries a CV path, a cover
+    // letter, an email and a phone number -- and `my-applications` returns all
+    // of them.
+    $body = $this->getJson('/api/jobs/my-applications?user_id='.$this->victim->getKey())->getContent();
+
+    foreach (['resumes/victim-cv.pdf', 'victim@example.test', '555-0100', 'Please hire me.'] as $secret) {
+        $this->assertStringNotContainsString(
+            $secret,
+            (string) $body,
+            'an unauthenticated response must not contain a candidate\'s '.$secret,
         );
     }
+});
 
-    public function test_an_anonymous_caller_cannot_read_an_application_via_the_candidate_header(): void
-    {
-        $response = $this->getJson('/api/jobs/my-applications', [
-            'X-Candidate-Id' => (string) $this->victim->getKey(),
-        ]);
+test('an anonymous caller cannot withdraw someone elses application', function () {
+    // Worse than a read: a write. Withdrawing an application is visible to the
+    // employer and to the candidate, and it is not obviously an attack when
+    // they notice it.
+    $response = $this->postJson(
+        '/api/jobs/applications/'.$this->application->getKey().'/withdraw',
+        ['user_id' => $this->victim->getKey()],
+    );
 
-        self::assertNotSame(200, $response->getStatusCode());
-    }
+    expect($response->getStatusCode())->not->toBe(200);
+    expect($this->application->fresh()->status->value ?? $this->application->fresh()->status)->toBe(
+        'submitted',
+        'the application must still be submitted',
+    );
+});
 
-    public function test_the_contact_details_and_resume_path_do_not_leak(): void
-    {
-        // The payload is the point. An application carries a CV path, a cover
-        // letter, an email and a phone number -- and `my-applications` returns all
-        // of them.
-        $body = $this->getJson('/api/jobs/my-applications?user_id='.$this->victim->getKey())->getContent();
-
-        foreach (['resumes/victim-cv.pdf', 'victim@example.test', '555-0100', 'Please hire me.'] as $secret) {
-            self::assertStringNotContainsString(
-                $secret,
-                (string) $body,
-                'an unauthenticated response must not contain a candidate\'s '.$secret,
-            );
-        }
-    }
-
-    public function test_an_anonymous_caller_cannot_withdraw_someone_elses_application(): void
-    {
-        // Worse than a read: a write. Withdrawing an application is visible to the
-        // employer and to the candidate, and it is not obviously an attack when
-        // they notice it.
-        $response = $this->postJson(
-            '/api/jobs/applications/'.$this->application->getKey().'/withdraw',
-            ['user_id' => $this->victim->getKey()],
-        );
-
-        self::assertNotSame(200, $response->getStatusCode());
-        self::assertSame(
-            'submitted',
-            $this->application->fresh()->status->value ?? $this->application->fresh()->status,
-            'the application must still be submitted',
-        );
-    }
-
-    public function test_an_authenticated_candidate_still_reads_their_OWN_applications(): void
-    {
-        // The other half. A fix that locks out the legitimate candidate is the same
-        // defect wearing a different coat.
-        $this->actingAs($this->victim)
-            ->getJson('/api/jobs/my-applications')
-            ->assertOk()
-            ->assertJsonPath('data.0.id', $this->application->getKey());
-    }
-}
+test('an authenticated candidate still reads their OWN applications', function () {
+    // The other half. A fix that locks out the legitimate candidate is the same
+    // defect wearing a different coat.
+    $this->actingAs($this->victim)
+        ->getJson('/api/jobs/my-applications')
+        ->assertOk()
+        ->assertJsonPath('data.0.id', $this->application->getKey());
+});

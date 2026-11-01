@@ -16,7 +16,7 @@ composer install
 cp .env.example .env && php artisan key:generate
 php artisan migrate
 
-php artisan test        # the PHP suites
+vendor/bin/pest         # the PHP suites (Pest; also `composer test`)
 npm install
 npm run test:live       # boots the app on a port and drives JobsClient at it
 ```
